@@ -50,21 +50,22 @@ func getAlbumById(c *gin.Context) {
 	db, err := connectDatabase()
 	if err != nil {
 		c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": "Error connecting to database"})
+		return
 	}
 	defer db.Close()
 
 	var album models.Album
 
-	rows, err := db.Query("SELECT * FROM album WHERE id = ?", id)
-	if err != nil {
-		c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": "Error executing query"})
-	}
-
-	if rows.Next() {
-		if err := rows.Scan(&album.ID, &album.Title, &album.Artist, &album.Price); err != nil {
+	row := db.QueryRow("SELECT * FROM album WHERE id = ?", id)
+	if err := row.Scan(&album.ID, &album.Title, &album.Artist, &album.Price); err != nil {
+		if err == sql.ErrNoRows {
+			c.IndentedJSON(http.StatusNotFound, gin.H{"error": "Album not found"})
+		} else {
 			c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": "error populating album"})
 		}
+		return
 	}
+
 	c.IndentedJSON(http.StatusOK, album)
 }
 
@@ -72,11 +73,14 @@ func getAlbums(c *gin.Context) {
 	db, err := connectDatabase()
 	if err != nil {
 		c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": err})
+		return
 	}
 	defer db.Close()
+
 	rows, err := db.Query("SELECT * FROM album")
 	if err != nil {
 		c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": err})
+		return
 	}
 	defer rows.Close()
 
@@ -88,9 +92,11 @@ func getAlbums(c *gin.Context) {
 		err := rows.Scan(&album.ID, &album.Title, &album.Artist, &album.Price)
 		if err != nil {
 			c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": err})
+			return
 		}
 		albums = append(albums, album)
 	}
+
 	c.IndentedJSON(http.StatusOK, albums)
 }
 
@@ -99,26 +105,87 @@ func addAlbum(c *gin.Context) {
 
 	if err := c.BindJSON(&album); err != nil {
 		c.IndentedJSON(http.StatusBadRequest, gin.H{"error": err})
+		return
 	}
 
 	db, err := connectDatabase()
 
 	if err != nil {
 		c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": err})
+		return
 	}
 	defer db.Close()
 
 	result, err := db.Exec("INSERT INTO album (title, artist, price) VALUES (?, ?, ?)", album.Title, album.Artist, album.Price)
 	if err != nil {
 		c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": err})
+		return
 	}
 
 	lastID, err := result.LastInsertId()
 	if err != nil {
 		c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": err})
+		return
 	}
 
 	c.IndentedJSON(http.StatusCreated, gin.H{"success": lastID})
+}
+
+func updateAlbum(c *gin.Context) {
+	id := c.Param("id")
+
+	db, err := connectDatabase()
+	if err != nil {
+		c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": err})
+		return
+	}
+	defer db.Close()
+
+	var album models.Album
+	err = c.BindJSON(&album)
+
+	if err != nil {
+		c.IndentedJSON(http.StatusBadRequest, gin.H{"error": err})
+		return
+	}
+
+	result, err := db.Exec("UPDATE album SET title = ?, artist = ?, price = ? WHERE id = ?", album.Title, album.Artist, album.Price, id)
+	if err != nil {
+		c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": err})
+		return
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": err})
+		return
+	}
+
+	c.IndentedJSON(http.StatusOK, gin.H{"success": rowsAffected})
+}
+
+func deleteAlbum(c *gin.Context) {
+	id := c.Param("id")
+	db, err := connectDatabase()
+	if err != nil {
+		c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": err})
+		return
+	}
+	defer db.Close()
+
+	result, err := db.Exec("DELETE FROM album WHERE id =?", id)
+	if err != nil {
+		c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": err})
+		return
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": err})
+		return
+	}
+
+	c.IndentedJSON(http.StatusNoContent, gin.H{"success": rowsAffected})
 }
 
 func main() {
@@ -128,8 +195,10 @@ func main() {
 	router := gin.Default()
 
 	router.GET("/albums", getAlbums)
-	router.POST("/albums", addAlbum)
 	router.GET("/albums/:id", getAlbumById)
+	router.POST("/albums", addAlbum)
+	router.PUT("/albums/:id", updateAlbum)
+	router.DELETE("/albums/:id", deleteAlbum)
 
 	router.Run(serverAddress)
 }
